@@ -47,6 +47,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 
 try:  # make sure Windows consoles print accents/symbols fine
@@ -65,7 +66,7 @@ DEFAULT_DRAFTS = os.path.join(
 
 TARGET_INFO = [
     ("history", "Message history of closed conversations"),
-    ("sessions", "Closed sessions themselves (includes their history)"),
+    ("sessions", "Closed session records (includes their history)"),
     ("tool-output", "Tool outputs not used by the kept conversations"),
     ("snapshots", "Unused snapshot (git) objects"),
     ("vacuum", "Compact opencode.db (reclaims disk space)"),
@@ -165,30 +166,40 @@ def wait_key(text: str) -> bool:
     return False
 
 
-_DOTS = {"n": 0}
+_TICK = {"last": 0.0, "line": 0}
+
+
+def _tick(min_gap: float = 0.5) -> None:
+    """Print at most one dot every `min_gap` seconds (live feedback, never frozen-looking)."""
+    now = time.time()
+    if now - _TICK["last"] >= min_gap:
+        _TICK["last"] = now
+        print(".", end="", flush=True)
+        _TICK["line"] += 1
+        if _TICK["line"] >= 40:  # wrap the dot line after 40 dots
+            _TICK["line"] = 0
+            print()
 
 
 def attach_progress(con: sqlite3.Connection) -> None:
     """Make slow SQLite queries print live dots instead of looking frozen."""
 
     def _cb() -> int:
-        _DOTS["n"] += 1
-        if _DOTS["n"] >= 50:  # one dot per ~5M sqlite VM steps
-            print(".", end="", flush=True)
-            _DOTS["n"] = 0
+        _tick()
         return 0
 
     try:
-        con.set_progress_handler(_cb, 100000)
+        con.set_progress_handler(_cb, 20000)
     except Exception:
         pass
 
 
 def end_dots() -> None:
-    """Close the dot line (only when dots were printed)."""
-    if _DOTS["n"]:
+    """Close the dot line (only when dots were printed) and reset the ticker."""
+    if _TICK["line"]:
         print()
-        _DOTS["n"] = 0
+    _TICK["line"] = 0
+    _TICK["last"] = 0.0
 
 
 def open_ro(path: str) -> sqlite3.Connection:
@@ -373,17 +384,19 @@ TOOL_ID_RE = re.compile(r"tool_[A-Za-z0-9]{8,40}")
 
 
 def scan_messages(cur: sqlite3.Cursor):
-    """One single pass over every stored message.
+    """Sizes of every stored conversation, computed by SQLite in one aggregation.
 
     Returns counts as {session_id: [n_messages, bytes]} for ALL sessions.
+    SQLite computes length() from the record headers, so it does not even need
+    to read the full bodies of the messages.
     """
     counts: dict[str, list] = {}
-    for sid, data in cur.execute("select session_id, data from session_message"):
-        entry = counts.get(sid)
-        if entry is None:
-            counts[sid] = entry = [0, 0]
-        entry[0] += 1
-        entry[1] += len(data) if data else 0
+    rows = cur.execute(
+        "select session_id, count(*), total(length(data)) "
+        "from session_message group by session_id"
+    ).fetchall()
+    for sid, n, size in rows:
+        counts[sid] = [int(n), int(size or 0)]
     return counts
 
 
@@ -613,6 +626,29 @@ def apply_snapshot_plan(plan) -> tuple[int, int, int]:
 # --------------------------------------------------------------------------- #
 # vacuum / logs
 # --------------------------------------------------------------------------- #
+def _copy_with_dots(src: str, dst: str) -> int:
+    """Copy src to dst printing live dots (a 10+ GB backup copy is silent otherwise)."""
+    total = os.path.getsize(src)
+    copied = 0
+    try:
+        with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+            while True:
+                chunk = fsrc.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+                copied += len(chunk)
+                _tick()
+    except OSError:
+        try:
+            os.remove(dst)  # do not leave a partial backup behind
+        except OSError:
+            pass
+        raise
+    end_dots()
+    return copied
+
+
 def apply_vacuum(db: str) -> None:
     before = os.path.getsize(db)
     try:
@@ -623,15 +659,35 @@ def apply_vacuum(db: str) -> None:
         log("   !! VACUUM needs about %s free and only %s is available; step skipped."
             % (human(before), human(disk_free)))
         return
-    log("   compacting %s ... (this may take several minutes)" % human(before))
+    log("   compacting %s ... (this may take several minutes; dots = working)"
+        % human(before))
     t0 = time.time()
-    con = sqlite3.connect(db, isolation_level=None)
-    try:
-        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        con.execute("VACUUM")
-        con.execute("PRAGMA optimize")
-    finally:
-        con.close()
+    result: dict = {}
+
+    def _work() -> None:
+        con = None
+        try:
+            con = sqlite3.connect(db, isolation_level=None)
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            con.execute("VACUUM")
+            con.execute("PRAGMA optimize")
+            result["ok"] = True
+        except Exception as exc:  # surfaced after joining the thread
+            result["error"] = exc
+        finally:
+            if con is not None:
+                con.close()
+
+    thread = threading.Thread(target=_work, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        thread.join(timeout=2.0)
+        if thread.is_alive():
+            _tick(2.0)
+    end_dots()
+    if "error" in result:
+        log("   !! vacuum failed: %s" % result["error"])
+        return
     after = os.path.getsize(db)
     log("   done in %.1fs: %s -> %s (freed %s)"
         % (time.time() - t0, human(before), human(after), human(max(0, before - after))))
@@ -684,7 +740,7 @@ def wizard(data_dir: str, drafts_path: str) -> dict | None:
     rule("STEP 1  What do you want to clean?")
     titles = dict(TARGET_INFO)
     for key in ("history", "sessions"):
-        titles[key] += "   <-- irreversible"
+        titles[key] += "   <-- cannot be undone"
     chosen = ask_multi(WIZARD_KEYS, titles, [k for k in WIZARD_KEYS if k in DEFAULT_TARGETS])
     if not chosen:
         log("\nNothing selected; there is nothing to do.")
@@ -703,12 +759,14 @@ def wizard(data_dir: str, drafts_path: str) -> dict | None:
     counts = None
     if "history" in chosen or "tool-output" in chosen:
         log()
-        log("   Scanning all stored messages ...")
-        log("   (a 10+ GB database can take a few minutes; dots '.....' = working, not frozen)")
+        log("   Scanning all stored conversations ...")
+        log("   (this reads the whole database; a 10+ GB one can take a couple of minutes)")
+        log("   (one dot every half second = working, not frozen)")
+        t0 = time.time()
         counts = scan_messages(cur)
         end_dots()
-        log("   done: %s messages in %s conversations."
-            % (f"{sum(n for n, _ in counts.values()):,}", f"{len(counts):,}"))
+        log("   done in %.1fs: %s messages in %s conversations."
+            % (time.time() - t0, f"{sum(n for n, _ in counts.values()):,}", f"{len(counts):,}"))
 
     keep: list[str] = []
     min_mb = 0.0
@@ -761,7 +819,7 @@ def wizard(data_dir: str, drafts_path: str) -> dict | None:
         rule("STEP 4  Delete the closed session rows too?")
         log("   'history' deletes the messages; conversations disappear from the list,")
         log("   but the session records stay inside the database.")
-        log("   'sessions' deletes the records completely (cleaner, also irreversible).")
+        log("   'sessions' deletes the records completely (cleaner, also cannot be undone).")
         if ask_bool("   Delete the closed session rows completely", True):
             if "sessions" not in chosen:
                 chosen.append("sessions")
@@ -772,7 +830,7 @@ def wizard(data_dir: str, drafts_path: str) -> dict | None:
     rule("STEP %d  Backup copy" % (5 if "history" in chosen else 2))
     backup = None
     if "history" in chosen:
-        log("   Deleting history is IRREVERSIBLE. You can back up opencode.db first")
+        log("   Deleting history cannot be undone. You can back up opencode.db first")
         log("   (it currently takes %s)." % human(os.path.getsize(db)))
         if ask_bool("   Create a backup copy", True):
             default_backup = os.path.join(
@@ -915,8 +973,9 @@ def run(cfg: dict, data_dir: str, drafts_path: str) -> int:
     if cfg.get("backup"):
         rule("BACKUP COPY")
         log("   copying %s -> %s" % (db, cfg["backup"]))
+        log("   (dots = still copying; a 10+ GB backup takes a while)")
         os.makedirs(os.path.dirname(os.path.abspath(cfg["backup"])), exist_ok=True)
-        shutil.copy2(db, cfg["backup"])
+        _copy_with_dots(db, cfg["backup"])
         for suffix in ("-wal", "-shm"):
             if os.path.isfile(db + suffix):
                 shutil.copy2(db + suffix, cfg["backup"] + suffix)
@@ -934,9 +993,11 @@ def run(cfg: dict, data_dir: str, drafts_path: str) -> int:
         rule("DELETING CLOSED-CONVERSATION HISTORY")
         selected = cfg.get("selected")
         if selected is None:
-            log("   scanning messages ...")
+            log("   scanning conversations ... (dots = working)")
+            t0 = time.time()
             counts = scan_messages(wcur)
             end_dots()
+            log("   scan finished in %.1fs" % (time.time() - t0))
             rows = build_history_rows(wcur, counts, protected)
             selected = [r for r in rows if r[2] / 1048576.0 >= cfg["min_mb"]]
         log("   conversations affected : %s" % f"{len(selected):,}")
@@ -1135,9 +1196,11 @@ def main() -> int:
 
         counts = None
         if "history" in targets or "tool-output" in targets:
-            log("   scanning messages ...")
+            log("   scanning conversations ... (dots = working)")
+            t0 = time.time()
             counts = scan_messages(cur)
             end_dots()
+            log("   scan finished in %.1fs" % (time.time() - t0))
         if "history" in targets:
             rows = build_history_rows(cur, counts, protected)
             selected = [r for r in rows if r[2] / 1048576.0 >= cfg["min_mb"]]
@@ -1171,7 +1234,7 @@ def main() -> int:
 
     if not args.yes:
         try:
-            answer = input("\nThis deletes data IRREVERSIBLY. Type YES to continue: ")
+            answer = input("\nThis deletes data permanently. Type YES to continue: ")
         except EOFError:
             answer = ""
         if answer.strip().upper() not in ("YES", "Y"):

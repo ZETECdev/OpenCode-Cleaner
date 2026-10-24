@@ -18,8 +18,8 @@ On a busy setup `opencode.db` alone can reach **10+ GB**.
 
 | Step | Target | Notes |
 |------|--------|-------|
-| `history` | Messages of **closed** conversations | Irreversible |
-| `sessions` | The closed session records themselves | Cleaner, also irreversible |
+| `history` | Messages of **closed** conversations | Cannot be undone |
+| `sessions` | The closed session records themselves | Cleaner, also cannot be undone |
 | `tool-output` | Tool output files not used by the kept conversations | |
 | `snapshots` | Unused git objects inside the internal snapshot repos | Your real project repos are never touched |
 | `vacuum` | Compacts `opencode.db` | Without it, deleted space does not return to disk |
@@ -59,9 +59,10 @@ python clean_opencode.py          (or directly)
 5. **STEP 5** – optional backup copy of `opencode.db` (recommended, Enter = yes).
 6. Review the **summary** → `Run now` → done.
 
-> 💡 **Big databases:** the first scan reads every stored message. On a 10 GB
-> database this can take a few minutes — the script prints dots (`.....`) while
-> working, so dots = busy, **not frozen**.
+> 💡 **Big databases:** the first scan reads the whole database. On a 10 GB
+> database this can take a couple of minutes — the script prints dots (`.....`)
+> every half second while working, so dots = busy, **not frozen**. The backup
+> copy and `vacuum` also print dots instead of going silent.
 >
 > 💡 After finishing (or cancelling), **press any key to run again** — handy if you
 > want to repeat with different options. Ctrl+C quits.
@@ -82,7 +83,7 @@ python clean_opencode.py --force                        # ignore the OpenCode/bu
 
 ## Safety notes
 
-- Deleting history is **irreversible** — the wizard offers a backup copy by default
+- Deleting history **cannot be undone** — the wizard offers a backup copy by default
   (`backup-opencode-<date>.db`, next to the database).
 - `vacuum` needs free disk space roughly equal to the size of `opencode.db`;
   it is skipped automatically if there is not enough.
