@@ -1,4 +1,4 @@
-<h1 align="center">🧹 OpenCode Cleaner</h1>
+﻿<h1 align="center">ðŸ§¹ OpenCode Cleaner</h1>
 
 <p align="center">
   <b>Safely reclaim gigabytes from your OpenCode data folder</b><br>
@@ -27,19 +27,19 @@ On a busy setup `opencode.db` alone can reach **10+ GB**.
 
 ## What is always kept
 
-- 📌 Conversations currently **open as tabs** in the OpenCode desktop app
+- ðŸ“Œ Conversations currently **open as tabs** in the OpenCode desktop app
   (they are read from the app's `drafts.sqlite`)
-- ⛓️ Their **ancestors** and **fork sources** (the family tree is walked automatically)
-- ➕ Any extra session id you type during the wizard (or `--keep` on the CLI)
+- â›“ï¸ Their **ancestors** and **fork sources** (the family tree is walked automatically)
+- âž• Any extra session id you type during the wizard (or `--keep` on the CLI)
 
-## ⚠️ Before running
+## âš ï¸ Before running
 
 OpenCode must not be writing while the cleaner works, so:
 
-1. **Close OpenCode completely** — the desktop app *and* any `bun` processes still
+1. **Close OpenCode completely** â€” the desktop app *and* any `bun` processes still
    running it. Check the system tray and Task Manager (look for `OpenCode` and `bun`).
 2. If something is still open, the script tells you exactly what it found and
-   **waits — press any key to retry** once you have closed it (Ctrl+C to quit).
+   **waits â€” press any key to retry** once you have closed it (Esc to quit).
 3. Run it:
 
 ```
@@ -49,23 +49,23 @@ python clean_opencode.py          (or directly)
 
 ## The wizard
 
-1. **STEP 1** – pick what to clean (numbers, `all`, `none`, or just **Enter** for the defaults).
+1. **STEP 1** â€“ pick what to clean (numbers, `all`, `none`, or just **Enter** for the defaults).
 2. **Open tabs are always kept automatically.** Optionally type extra
    **closed** conversation ids you want to keep (Enter = keep none).
    The 15 heaviest closed conversations are listed to help you decide.
-3. **STEP 3** – minimum size to delete: `0` (default) = delete *all* closed
+3. **STEP 3** â€“ minimum size to delete: `0` (default) = delete *all* closed
    conversations; `5` = only those of 5 MB or more.
-4. **STEP 4** – also delete the closed session records (recommended, Enter = yes).
-5. **STEP 5** – optional backup copy of `opencode.db` (recommended, Enter = yes).
-6. Review the **summary** → `Run now` → done.
+4. **STEP 4** â€“ also delete the closed session records (recommended, Enter = yes).
+5. **STEP 5** â€“ optional backup copy of `opencode.db` (recommended, Enter = yes).
+6. Review the **summary** â†’ `Run now` â†’ done.
 
-> 💡 **Big databases:** the first scan reads the whole database. On a 10 GB
-> database this can take a couple of minutes — the script prints dots (`.....`)
+> ðŸ’¡ **Big databases:** the first scan reads the whole database. On a 10 GB
+> database this can take a couple of minutes â€” the script prints dots (`.....`)
 > every half second while working, so dots = busy, **not frozen**. The backup
 > copy and `vacuum` also print dots instead of going silent.
 >
-> 💡 After finishing (or cancelling), **press any key to run again** — handy if you
-> want to repeat with different options. Ctrl+C quits.
+> ðŸ’¡ After finishing (or cancelling), **press any key to run again** â€” handy if you
+> want to repeat with different options. Esc quits.
 
 ## Non-interactive mode
 
@@ -83,12 +83,12 @@ python clean_opencode.py --force                        # ignore the OpenCode/bu
 
 ## Safety notes
 
-- Deleting history **cannot be undone** — the wizard offers a backup copy by default
+- Deleting history **cannot be undone** â€” the wizard offers a backup copy by default
   (`backup-opencode-<date>.db`, next to the database).
 - `vacuum` needs free disk space roughly equal to the size of `opencode.db`;
   it is skipped automatically if there is not enough.
 - Deleting history without `vacuum` frees space *inside* the database file but not on disk.
-- `--force` while OpenCode is running can corrupt the database — don't.
+- `--force` while OpenCode is running can corrupt the database â€” don't.
 
 ## Requirements
 
@@ -109,4 +109,5 @@ python clean_opencode.py --force                        # ignore the OpenCode/bu
 
 ---
 
-*Runs at your own risk — it deletes data. Make the backup when the wizard offers it.* 🧹
+*Runs at your own risk â€” it deletes data. Make the backup when the wizard offers it.* ðŸ§¹
+

@@ -150,8 +150,9 @@ def _stdin_is_console() -> bool:
 def wait_key(text: str) -> bool:
     """Show text, wait for a single key press. True = continue, False = quit.
 
-    Only a real Windows console can deliver a keypress; when stdin is not one
-    (pipes, NUL, schedulers, tests) report quit instead of hanging forever.
+    Any key continues; Esc or Q quits. Ctrl+C also interrupts (handled by the
+    keyboard). Only a real Windows console can deliver a keypress; when stdin
+    is not one (pipes, NUL, schedulers, tests) report quit instead of hanging.
     """
     print("\n%s" % text, flush=True)
     if _stdin_is_console():
@@ -160,7 +161,7 @@ def wait_key(text: str) -> bool:
         key = msvcrt.getwch()
         if key in ("\x00", "\xe0"):  # arrow / function keys send two parts
             msvcrt.getwch()
-        if key in ("\x03", "\x1b"):  # Ctrl+C or Esc = quit
+        if key in ("\x03", "\x1b") or key.lower() == "q":  # quit key(s)
             raise KeyboardInterrupt
         return True
     return False
@@ -274,10 +275,9 @@ def ensure_preflight(data_dir: str, force: bool, interactive: bool) -> bool:
             log()
             log("  Close OpenCode COMPLETELY (check the system tray too) and also any")
             log("  'bun' processes still running it (Task Manager > OpenCode / Bun).")
-            log("  Then press a key to retry.")
         if not interactive:
             return False
-        if not wait_key("Press any key to retry (Ctrl+C to quit)..."):
+        if not wait_key("Press any key to retry once everything is closed (Esc to quit)..."):
             return False
 
 
@@ -1141,7 +1141,7 @@ def main() -> int:
         interactive = False
 
     if interactive:
-        while True:  # the window stays open; press a key to run again, Ctrl+C to quit
+        while True:  # the window stays open; press a key to run again, Esc to quit
             rule("OPENCODE CLEANER")
             log("data: %s" % data_dir)
             if not ensure_preflight(data_dir, args.force, interactive=True):
@@ -1150,7 +1150,7 @@ def main() -> int:
             if cfg is not None:
                 run(cfg, data_dir, drafts_path)
             log()
-            if not wait_key("Press any key to run again (Ctrl+C to quit)..."):
+            if not wait_key("Press any key to run again (Esc to quit)..."):
                 break
         return 0
 
